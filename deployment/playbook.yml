@@ -1,0 +1,107 @@
+---
+- name: Deploy Car Rental Application to AWS
+  hosts: all
+  become: yes
+  vars:
+    app_dir: /opt/car-rental
+    app_user: ubuntu
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - docker.io
+          - docker-compose-plugin
+          - git
+          - python3-pip
+        state: present
+
+    - name: Install Docker SDK for Python
+      pip:
+        name: docker
+        state: present
+
+    - name: Ensure Docker service is running
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add user to docker group
+      user:
+        name: "{{ app_user }}"
+        groups: docker
+        append: yes
+
+    - name: Create application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+
+    - name: Copy docker-compose file
+      copy:
+        src: ../docker-compose.yml
+        dest: "{{ app_dir }}/docker-compose.yml"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+
+    - name: Copy backend directory
+      copy:
+        src: ../backend/
+        dest: "{{ app_dir }}/backend"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+
+    - name: Copy frontend directory
+      copy:
+        src: ../frontend/
+        dest: "{{ app_dir }}/frontend"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+
+    - name: Create backend environment file
+      template:
+        src: templates/backend.env.j2
+        dest: "{{ app_dir }}/backend/.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0600'
+
+    - name: Create frontend environment file
+      template:
+        src: templates/frontend.env.j2
+        dest: "{{ app_dir }}/frontend/.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0600'
+      vars:
+        api_url: "http://{{ ansible_default_ipv4.address }}:3001"
+
+    - name: Stop existing containers
+      docker_compose:
+        project_src: "{{ app_dir }}"
+        state: absent
+      ignore_errors: yes
+
+    - name: Start application with Docker Compose
+      docker_compose:
+        project_src: "{{ app_dir }}"
+        state: present
+        pull: yes
+        build: yes
+
+    - name: Wait for frontend to become reachable
+      wait_for:
+        host: "{{ ansible_default_ipv4.address }}"
+        port: 3000
+        delay: 10
+        timeout: 300
+
